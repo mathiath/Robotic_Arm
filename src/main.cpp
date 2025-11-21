@@ -1,113 +1,196 @@
-#include <Arduino.h>
-#include <Encoder.h>
+/* 
+    Inspired by AR4 Robot Control Software
+    Copyright (c) 2024, Chris Annin
+    All rights reserved.
 
-const int enPin = 22;      // Global Enable-pin.
-const bool enLow = true;   // true = aktiv når lav
+    Specs:
+
+    J1: Nema 17, 10:1, 1000 PPR (4000 CPR)
+    J2: Nema 23, 50:1, 1000 PPR (4000 CPR)
+    J3: Nema 17, 20:1, 1000 PPR (4000 CPR)
+    J4: Nema 14, 20:1, 300 PPR (1200 CPR)
+    J5: Nema 14, 20:1, 300 PPR (1200 CPR)
+    J6: Nema 14, 20:1, 1000 PPR (1200 CPR)
+
+    Encoder Multiplier: (CPR * GRatio / 360)
+
+    J1: 4000 * 10 / 360 = 111.1111
+    J2: 4000 * 50 / 360 = 555.5556
+    J3: 4000 * 20 / 360 = 222.2222
+    J4: 1200 * 20 / 360 = 66.6667
+    J5: 1200 * 20 / 360 = 66.6667
+    J6: 4000 * 20 / 360 = 222.2222
+
+    Motor maxDegPerSec: (motorMaxRPM * 6 / GR)
+    Hardware cap: 2000 rpm pre gearbox. Choosing absolute motor cap at 1500 rpm for noise and safety reasons.
+
+    Absolute cap:
+    J1: 1500 rpm * 6 / 10 = 900 deg/s
+    J2: 1500 rpm * 6 / 50 = 180 deg/s
+    J3: 1500 rpm * 6 / 20 = 450 deg/s
+    J4: 1500 rpm * 6 / 20 = 450 deg/s
+    J5: 1500 rpm * 6 / 20 = 450 deg/s
+    J6: 1500 rpm * 6 / 20 = 450 deg/s
+
+    Chosen cap:
+    J1: 300 rpm * 6 / 10 = 180 deg/s
+    J2: 750 rpm * 6 / 50 = 90 deg/s
+    J3: 600 rpm * 6 / 20 = 180 deg/s
+    J4: 900 rpm * 6 / 20 = 270 deg/s
+    J5: 900 rpm * 6 / 20 = 270 deg/s
+    J6: 900 rpm * 6 / 20 = 270 deg/s
+
+    Steps Per Deg: (SPR * GRatio / 360)
+
+    J1: 1600 * 10 / 360 = 44.4444
+    J2: 1600 * 50 / 360 = 222.2222
+    J3: 1600 * 20 / 360 = 88.8889
+    J4: 1600 * 20 / 360 = 88.8889
+    J5: 1600 * 20 / 360 = 88.8889
+    J6: 1600 * 20 / 360 = 88.8889
+
+    SPD MUST ALSO BE CHECKED PHYSICALLY
+
+*/
+
+
+#include <Arduino.h>
+
+// pins
+const int stepPin[6] = {0, 0, 0, 0, 0, 0};
+const int dirPin[6] = {0, 0, 0, 0, 0, 0};
+const int enPin = 22;
+const int estopPin = 0;
+
+const float encMult[6] = {111.1111, 555.5556, 222.2222, 66.6667, 66.6667, 222.2222};
+const float stepDeg[6] = {44.4444, 222.2222, 88.8889, 88.8889, 88.8889, 88.8889};
+
+const int motorDir[6] = {1, 1, 1, 1, 1, 1};
+float axisLimPos[6] = {0, 0, 0, 0, 0, 0};
+float axisLimNeg[6] = {0, 0, 0, 0, 0, 0};
+const float maxDegPerSec[6] = {180, 90, 180, 270, 270, 270};
 
 bool motorsEnabled = false;
 
-const uint32_t motionInterval_US = 500; // 0,5 ms = 2 kHz (ikke brukt ennå)
+float axisLim[6];
+float stepLim[6];
+int zeroStep[6];
+int stepM[6]; // master step count
 
-struct JointConfig {
-  uint8_t stepPin;
-  uint8_t dirPin;
-  uint8_t encA;
-  uint8_t encB;
-  bool dirInvert;
-  float stepsPerDeg;
-  float limPosDeg;
-  float limNegDeg;
-  float encMult; 
-};
+float jointDeg[6]; // nåværende vinkel i grader
 
-JointConfig jointCfg[6] = {
-  // stepPin, dirPin, encA, encB, invert, stepsPerDeg, limPos, limNeg, encMult
+int collisionTrue[6] = {0, 0, 0, 0, 0, 0};
+int totalCollision = 0;
+int KinematicError = 0;
 
-  // Joint 1 — NEMA17, 1000 PPR (4000 CPR), 10:1
-  {0, 0, 0, 0, false, 44.44f, 170.0f, -170.0f, 111.11f},
+unsigned long debounceTime[6] = {0, 0, 0, 0, 0, 0};
+unsigned long debounceDelay = 50;
 
-  // Joint 2 — NEMA23, 1000 PPR (4000 CPR), 50:1
-  {0, 0, 0, 0, true,  222.22f,  90.0f,  -42.0f, 555.56f},
-
-  // Joint 3 — NEMA17, 1000 PPR (4000 CPR), 20:1
-  {0, 0, 0, 0, false, 88.89f,  52.0f,  -89.0f, 222.22f},
-
-  // Joint 4 — NEMA14, 300 PPR (1200 CPR), 20:1
-  {0, 0, 0, 0, false, 88.89f, 180.0f, -180.0f, 66.67f},
-
-  // Joint 5 — NEMA14, 300 PPR (1200 CPR), 20:1
-  {0, 0, 0, 0, false, 88.89f, 105.0f, -105.0f, 66.67f},
-
-  // Joint 6 — NEMA14, 1000 PPR (4000 CPR), 20:1
-  {0, 0, 0, 0, false, 88.89f, 180.0f, -180.0f, 222.22f}
-};
-
-// Encoder-objekter (bruker encA/encB fra jointCfg)
-Encoder enc[6] = {
-  Encoder(jointCfg[0].encA, jointCfg[0].encB),
-  Encoder(jointCfg[1].encA, jointCfg[1].encB),
-  Encoder(jointCfg[2].encA, jointCfg[2].encB),
-  Encoder(jointCfg[3].encA, jointCfg[3].encB),
-  Encoder(jointCfg[4].encA, jointCfg[4].encB),
-  Encoder(jointCfg[5].encA, jointCfg[5].encB)
-};
-
-void enableMotors() {
-  motorsEnabled = true;
-  if (enPin >= 0) {
-    digitalWrite(enPin, enLow ? LOW : HIGH);
-  }
+bool estopActive() {
+    return digitalRead(estopPin) == LOW;
 }
 
-void disableMotors() {
-  motorsEnabled = false;
-  if (enPin >= 0) {
-    digitalWrite(enPin, enLow ? HIGH : LOW);
-  }
+void initPins() {
+
+    for (int i = 0; i < 6; i++) {
+        pinMode(stepPin[i], OUTPUT);
+        pinMode(dirPin[i], OUTPUT);
+        digitalWrite(stepPin[i], LOW);
+        digitalWrite(dirPin[i], LOW);
+    }
+    pinMode(enPin, OUTPUT);
+    digitalWrite(enPin, HIGH); // motor disabled during init
+    pinMode(estopPin, INPUT_PULLUP);
 }
 
-// encoder counts -> grader for joint j
-float encCountsToDeg(int j, long counts) {
-  return counts / jointCfg[j].encMult;
+void initParams() {
+    for (int i=0; i<6; i++) {
+        axisLim[i] = axisLimPos[i] + axisLimNeg[i];
+        stepLim[i] = axisLim[i] * stepDeg[i];
+        zeroStep[i] = axisLimNeg[i] * stepDeg[i];
+        stepM[i] = zeroStep[i];
+        jointDeg[i] = 0.0f;
+    }
+}
+
+long degToSteps(int axis, float deg) {
+    if (deg > axisLimPos[axis]) deg = axisLimPos[axis];
+    if (deg < -axisLimNeg[axis]) deg = -axisLimNeg[axis];
+
+    float stepsF = (deg + axisLimNeg[axis]) * stepDeg[axis];
+    return round(stepsF);
+}
+
+float stepsToDeg(int axis, long steps) {
+    float deg = ((float)steps / stepDeg[axis]) - axisLimNeg[axis];
+    return deg;
+}
+
+// NEW: flytt ett ledd til vinkel (deg) med ønsket hastighet (deg/s)
+void moveJointToDeg(int axis, float targetDeg, float speedDegPerSec) {
+    if (axis < 0 || axis >= 6) return;
+    if (!motorsEnabled) return;       // ikke kjør hvis motorer er disabled
+    if (estopActive()) return;        // stopp hvis e-stop
+
+    // clamp mot maks-hastighet for dette leddet
+    if (speedDegPerSec > maxDegPerSec[axis]) {
+        speedDegPerSec = maxDegPerSec[axis];
+    }
+    if (speedDegPerSec <= 0.0f) {
+        speedDegPerSec = maxDegPerSec[axis] * 0.1f; // fallback
+    }
+
+    long targetStep  = degToSteps(axis, targetDeg);
+    long currentStep = stepM[axis];
+    long delta       = targetStep - currentStep;
+
+    if (delta == 0) return;
+
+    int dir = (delta > 0) ? 1 : -1;
+    long stepsToMove = labs(delta);
+
+    // sett retning (inkluderer motorDir)
+    int hwDir = (dir * motorDir[axis] > 0) ? HIGH : LOW;
+    digitalWrite(dirPin[axis], hwDir);
+
+    // stepFreq = speedDegPerSec * stepsPerDeg
+    float stepFreq = speedDegPerSec * stepDeg[axis];   // steps/s
+    if (stepFreq < 1.0f) stepFreq = 1.0f;
+    unsigned long delayUs = (unsigned long)(1000000.0f / stepFreq);
+
+    for (long s = 0; s < stepsToMove; s++) {
+        if (estopActive() || !motorsEnabled) {
+            return;
+        }
+
+        digitalWrite(stepPin[axis], HIGH);
+        delayMicroseconds(2); // pulsbredden, kan justeres
+        digitalWrite(stepPin[axis], LOW);
+        delayMicroseconds(delayUs);
+
+        stepM[axis] += dir;
+    }
+
+    jointDeg[axis] = stepsToDeg(axis, stepM[axis]);
+}
+
+void moveToJointAngles(float target[6], float speedDegPerSec) {
+    for (int i = 0; i < 6; i++) {
+        if (estopActive() || !motorsEnabled) return;
+        moveJointToDeg(i, target[i], speedDegPerSec);
+    }
 }
 
 void setup() {
-  Serial.begin(115200);
-  delay(200);
+    Serial.begin(115200);
+    initPins();
+    initParams();
+    
 
-  // Enable-pin
-  if (enPin >= 0) {
-    pinMode(enPin, OUTPUT);
-    disableMotors();
-  }
-
-  // Encoder-pins – sett pullup
-  for (int j = 0; j < 6; j++) {
-    pinMode(jointCfg[j].encA, INPUT_PULLUP);
-    pinMode(jointCfg[j].encB, INPUT_PULLUP);
-  }
-
-  Serial.println("Encoder test klar. Roter ledd og se counts/deg.");
 }
 
 void loop() {
-  Serial.print("ENC: ");
 
-  for (int j = 0; j < 6; j++) {
-    long c = enc[j].read();
-    float deg = encCountsToDeg(j, c);
 
-    Serial.print("J");
-    Serial.print(j + 1);
-    Serial.print("=");
-    Serial.print(c);
-    Serial.print(" (");
-    Serial.print(deg, 2);
-    Serial.print(" deg)");
 
-    if (j < 5) Serial.print(" | ");
-  }
-
-  Serial.println();
-  delay(200);
 }
