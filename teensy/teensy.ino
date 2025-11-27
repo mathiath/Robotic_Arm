@@ -51,9 +51,9 @@
 // pins
 const int stepPin[6] = {0, 2, 4, 6, 8, 10};
 const int dirPin[6] = {1, 3, 5, 7, 9, 11};
-const int encAPin[6] = {13, 16, 19, 22, 24, 26}; // -1 = not used
-const int encBPin[6] = {14, 17, 20, 23, 25, 27}; // -1 = not used
-const int encZPin[6] = {15, 18, 21, -1, -1, 28}; // -1 = not used
+const int encAPin[6] = {14, 16, 18, 20, 22, 24};
+const int encBPin[6] = {15, 17, 19, 21, 23, 25};
+
 const int enPin = 12;
 //const int estopPin = 0;
 
