@@ -21,10 +21,14 @@
     J5: 1200 * 40 / 360 = 133.3333
     J6: 4000 * 20 / 360 = 222.2222
 
-    Motor maxDegPerSec: (motorMaxRPM * 6 / GR)
+    JOINT AND MOTOR SPEEDS:
+
+    Motor maxDegPerSec:
     Hardware cap: 2000 rpm pre gearbox. Choosing absolute motor cap at 1500 rpm for noise and safety reasons.
 
-    Absolute cap:
+    maxDegPerSec = motorMaxRPM * 6 / GRatio
+
+    Absolute motor cap / joint cap:
     J1: 1500 rpm * 6 / 10 = 900 deg/s
     J2: 1500 rpm * 6 / 50 = 180 deg/s
     J3: 1500 rpm * 6 / 20 = 450 deg/s
@@ -32,7 +36,7 @@
     J5: 1500 rpm * 6 / 40 = 225 deg/s
     J6: 1500 rpm * 6 / 20 = 450 deg/s
 
-    Chosen cap:
+    Chosen motor cap / joint cap:
     J1: 300 rpm * 6 / 10 = 180 deg/s
     J2: 750 rpm * 6 / 50 = 90 deg/s
     J3: 600 rpm * 6 / 20 = 180 deg/s
@@ -40,35 +44,32 @@
     J5: 1200 rpm * 6 / 40 = 180 deg/s
     J6: 900 rpm * 6 / 20 = 270 deg/s
 
-    Steps Per Deg: (SPR * GRatio / 360)
-
-    J1: 1600 * 10 / 360 = 44.4444
-    J2: 1600 * 50 / 360 = 222.2222
-    J3: 1600 * 20 / 360 = 88.8889
-    J4: 1600 * 20 / 360 = 88.8889
-    J5: 1600 * 40 / 360 = 177.7778
-    J6: 1600 * 20 / 360 = 88.8889
-
-    SPD MUST ALSO BE CHECKED PHYSICALLY
-
 */
-
 
 #include <Arduino.h>
 
 // pins
-const int stepPin[6] = {0, 0, 0, 0, 0, 0};
-const int dirPin[6] = {0, 0, 0, 0, 0, 0};
-const int enPin = 22;
-const int estopPin = 0;
+const int stepPin[6] = {0, 2, 4, 6, 8, 10};
+const int dirPin[6] = {1, 3, 5, 7, 9, 11};
+const int encAPin[6] = {13, 16, 19, 22, 24, 26}; // -1 = not used
+const int encBPin[6] = {14, 17, 20, 23, 25, 27}; // -1 = not used
+const int encZPin[6] = {15, 18, 21, -1, -1, 28}; // -1 = not used
+const int enPin = 12;
+//const int estopPin = 0;
 
-const float encMult[6] = {111.1111, 555.5556, 222.2222, 66.6667, 133.3333, 222.2222};
-const float stepDeg[6] = {44.4444, 222.2222, 88.8889, 88.8889, 177.7778, 88.8889};
+
+
+// initParams
+const int CPR[6] = {4000, 4000, 4000, 1200, 1200, 4000};
+const int gearRatio[6] = {10, 50, 20, 20, 40, 20};
+const int SPR = 1600;
+const float encMult[6];
+const float stepDeg[6];
 
 const int motorDir[6] = {1, 1, 1, 1, 1, 1};
 float axisLimPos[6] = {0, 0, 0, 0, 0, 0};
 float axisLimNeg[6] = {0, 0, 0, 0, 0, 0};
-const float maxDegPerSec[6] = {180, 90, 180, 270, 180, 270};
+const float maxDegPerSec[6] = {180, 90, 180, 270, 180, 270}; // 
 
 bool motorsEnabled = false;
 
@@ -86,9 +87,13 @@ int KinematicError = 0;
 unsigned long debounceTime[6] = {0, 0, 0, 0, 0, 0};
 unsigned long debounceDelay = 50;
 
+
+
+/*
 bool estopActive() {
     return digitalRead(estopPin) == LOW;
 }
+*/
 
 void initPins() {
 
@@ -110,6 +115,9 @@ void initParams() {
         zeroStep[i] = axisLimNeg[i] * stepDeg[i];
         stepM[i] = zeroStep[i];
         jointDeg[i] = 0.0f;
+        encMult[i] = (float)(CPR[i] * gearRatio[i]) / 360.0;
+        stepDeg[i] = (float)(SPR * gearRatio[i]) / 360.0;
+
     }
 }
 
