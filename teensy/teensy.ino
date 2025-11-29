@@ -11,6 +11,9 @@
 
 const int n_J = 6; // Number of joints
 
+extern float Jlist[n_J];
+extern int robot_speed;
+
 // pins
 const int stepPin[n_J] = {0, 2, 4, 6, 8, 10};
 const int dirPin[n_J] = {1, 3, 5, 7, 9, 11};
@@ -20,6 +23,8 @@ const int encBPin[n_J] = {15, 17, 19, 21, 23, 25};
 
 const int enPin = 12;
 const int estopPin = 26;
+const int freeMovePin = 27;
+const int homePin = 28;
 
 
 // motor + encoder + driver spec
@@ -46,10 +51,15 @@ const float maxSpeed[n_J] = {180.0f, 90.0f, 180.0f, 270.0f, 180.0f, 270.0f}; // 
 float encMult[n_J];
 float stepDeg[n_J];
 
+long encRaw[n_J];
+float encDeg[n_J];
+
 long stepCount[n_J];
 float jointDeg[n_J];
 
 bool motorsEnabled = false;
+bool freeMove = false;
+
 
 bool estopActive() {
     return digitalRead(estopPin) == LOW;
@@ -57,9 +67,11 @@ bool estopActive() {
 
 void initPins() {
     pinMode(enPin, OUTPUT);
-    digitalWrite(enPin, LOW); // motor disabled during init
-
     pinMode(estopPin, INPUT_PULLUP);
+    pinMode(freeMovePin, INPUT_PULLUP);
+    pinMode(homePin, INPUT_PULLUP);
+
+    digitalWrite(enPin, LOW); // motor disabled during init
     
     for (int i = 0; i < n_J; i++) {
         pinMode(stepPin[i], OUTPUT);
@@ -103,13 +115,13 @@ void updateEncoders() {
         lastUpdate = now;
 
         for (int j=0; j<n_J; j++) {
-            long val = enc[j].read();
-            jointDeg[j] = (float)val / encMult[j];
+            encRaw[j] = enc[j].read();
+            encDeg[j] = (float)encRaw[j] / encMult[j];
         }
     } 
 }
 
-void moveJointsToDeg(const float targetDeg[n_J], const float targetSpeed[n_J]) {
+void moveJointsToDeg(const float targetDeg[n_J], float speed = 30.0f) {
     if (!motorsEnabled) return;
     if (estopActive())  return;
 
@@ -127,22 +139,24 @@ void moveJointsToDeg(const float targetDeg[n_J], const float targetSpeed[n_J]) {
 
         // Local variable copies that can be modified
         float deg = targetDeg[j];
-        float speed = targetSpeed[j];
+
+        // Bruk samme speed for alle ledd
+        float jointSpeed = speed;
 
         // Clamp position
         if (deg > limPos[j]) deg = limPos[j];
         if (deg < limNeg[j]) deg = limNeg[j];
 
         // Clamp speed
-        if (speed > maxSpeed[j]) speed = maxSpeed[j];
-        if (speed < 0.0f)        speed = 0.0f;
+        if (jointSpeed > maxSpeed[j]) jointSpeed = maxSpeed[j];
+        if (jointSpeed < 0.0f)        jointSpeed = 0.0f;
 
         // Step count to target angle
         long delta = degToSteps(j, deg) - stepCount[j];
         remSteps[j] = labs(delta);
 
         // No movement
-        if (remSteps[j] == 0 || speed == 0.0f) {
+        if (remSteps[j] == 0 || jointSpeed == 0.0f) {
             stepIntervalUs[j] = 0;
             continue;
         }
@@ -157,7 +171,7 @@ void moveJointsToDeg(const float targetDeg[n_J], const float targetSpeed[n_J]) {
         digitalWrite(dirPin[j], dirPinState ? HIGH : LOW);
 
         // Speed: deg/s to steps/s to interval in us
-        float stepsPerSec = speed * stepDeg[j];
+        float stepsPerSec = jointSpeed * stepDeg[j];
         if (stepsPerSec < 1.0f) stepsPerSec = 1.0f;
 
         stepIntervalUs[j] = (unsigned long)(1000000.0f / stepsPerSec);
@@ -187,6 +201,7 @@ void moveJointsToDeg(const float targetDeg[n_J], const float targetSpeed[n_J]) {
                 if (stepLevel[j] == LOW) {
                     remSteps[j]--;
                     stepCount[j] += direction[j];
+                    jointDeg[j] = stepsToDeg(j, stepCount[j]);
                 }
             }
 
@@ -199,36 +214,33 @@ void moveJointsToDeg(const float targetDeg[n_J], const float targetSpeed[n_J]) {
     }
 }
 
-void home() {
-    if (estopActive) return;
-
-    for (int j=0; j<n_J; j++) {
-        enc[j].write(0);
-        stepCount[j] = 0;
-        jointDeg[j] = 0.0f;
-    }
-}
-
-void goHome(float speed = 30.0f) {
+void home(float speed = 30.0f) {
     float targetDeg[n_J] = {0, 0, 0, 0, 0, 0};
-    float targetSpeed[n_J];
 
-    for (int j=0; j<n_J; j++) {
-        targetSpeed[j] = speed;
-    }
-
-    moveJointsToDeg(targetDeg, targetSpeed);
+    moveJointsToDeg(targetDeg, speed);
 }
 
 void setup() {
     Serial.begin(115200);
     initPins();
     initParams();
+    home();
+    enableMotors(true);
+
     
 }
 
 void loop() {
     updateEncoders();
 
+    if (Serial.available() > 0) {
+        handleSerialInput();
+        moveJointsToDeg(Jlist, (float)robot_speed);
+
+        Serial.println("[" + String(Jlist[0]) + " " + String(Jlist[1]) + " " + String(Jlist[2]) + " " + String(Jlist[3]) + " " + String(Jlist[4]) + " " + String(Jlist[5]) + "]");
+        update_encoder_valus();
+
+        Serial.println("end");
+  }
 
 }
