@@ -2,7 +2,6 @@ String encoder_value = "0.0,0.0,0.0,0.0,0.0,0.0"; //Encoder data
 int robot_speed = 30;
 int gripper_mode = 0;
 
-bool startopp = false;
 String message = "0";
 float Jlist[6] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0}; // a list of all joint angles in degrees
 
@@ -15,6 +14,7 @@ void handleSerialInput() {
   char type = message.charAt(0);
   message.remove(0,1);
   message.trim();
+  String text;
 
   switch (type) {
     case 'R': //Degrees for all the joints
@@ -30,14 +30,8 @@ void handleSerialInput() {
       Serial.println(String("Robot speed is: ") + String(robot_speed));
       break;
 
-    case 'H':
-      if (startopp == true) {
-        startopp = false;
-        Serial.println(String("Home:") + "0.0,0.0,0.0,0.0,0.0,0.0");
-      }
-      else {
-        Serial.println("Encoder:" + encoder_value);
-      }
+    case 'E':
+      Serial.println("Encoder:" + encoder_value);
       break;
 
     case 'G': // activeing gripper function
@@ -61,7 +55,7 @@ void listCheck(String message) {
     Serial.println("List input not defined");
   }
   else if (message.indexOf('[',1) != -1) {
-    for (unsigned int i=0; i < message.length(); i++) {
+    for (int i=0; i <= message.length(); i++) {
       if (message.indexOf('[',1) != -1) {
         message.remove(0, message.indexOf('[',1));
       }
@@ -93,6 +87,5 @@ void dataInToList(String dataList) {
     //setter verdien i Jlist til det som er i mellom i og j
     Jlist[k++]= dataList.substring(i,j).toFloat();
     i = dataList.indexOf(',',j);
-  }
-  //Serial.println("Can't convert input " + String(dataList) + " to list");  
+  } 
 }

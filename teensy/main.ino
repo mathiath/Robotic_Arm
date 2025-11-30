@@ -11,7 +11,7 @@
 
 const int n_J = 6; // Number of joints
 
-extern float Jlist[n_J];
+extern float Jlist[6];
 extern int robot_speed;
 
 // pins
