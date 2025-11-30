@@ -22,15 +22,17 @@ const int encAPin[n_J] = {14, 16, 18, 20, 22, 24};
 const int encBPin[n_J] = {15, 17, 19, 21, 23, 25};
 
 const int enPin = 12;
-const int estopPin = 26;
+const int eStopPin = 26;
 const int freeMovePin = 27;
 const int homePin = 28;
 
 
-// motor + encoder + driver spec
+// motor + encoder + driver specs
 const int SPR = 1600;
 const int CPR[n_J] = {4000, 4000, 4000, 1200, 1200, 4000};
 const int gearRatio[n_J] = {10, 50, 20, 20, 40, 20};
+
+const int invDir[n_J] = {0, 0, 0, 0, 0, 0};
 
 Encoder enc[n_J] = {
     Encoder(encAPin[0], encBPin[0]),
@@ -41,13 +43,12 @@ Encoder enc[n_J] = {
     Encoder(encAPin[5], encBPin[5]),
 };
 
-const int invDir[n_J] = {0, 0, 0, 0, 0, 0};
-
-float limPos[n_J] = {180.0f, 90.0f, 90.0f, 180.0f, 90.0f, 90.0f};
-float limNeg[n_J] = {-180.0f, -90.0f, -90.0f, -180.0f, -90.0f, -90.0f};
-
+// Joint specs
+float limPos[n_J] = {180.0f, 90.0f, 90.0f, 180.0f, 90.0f, 90.0f}; // 0 degrees = straight up/out
+float limNeg[n_J] = {-180.0f, -90.0f, -90.0f, -180.0f, -90.0f, -90.0f}; // 0 degrees = straight up/out
 const float maxSpeed[n_J] = {180.0f, 90.0f, 180.0f, 270.0f, 180.0f, 270.0f}; // deg/s
 
+// Vars
 float encMult[n_J];
 float stepDeg[n_J];
 
@@ -57,37 +58,32 @@ float encDeg[n_J];
 long stepCount[n_J];
 float jointDeg[n_J];
 
+// Func. flags
 bool motorsEnabled = false;
-bool freeMove = false;
-
-
-bool estopActive() {
-    return digitalRead(estopPin) == LOW;
-}
+bool eStopEnabled = false;
+bool freeMoveEnabled = false;
 
 void initPins() {
     pinMode(enPin, OUTPUT);
-    pinMode(estopPin, INPUT_PULLUP);
+    pinMode(eStopPin, INPUT_PULLUP);
     pinMode(freeMovePin, INPUT_PULLUP);
     pinMode(homePin, INPUT_PULLUP);
 
     digitalWrite(enPin, LOW); // motor disabled during init
     
-    for (int i = 0; i < n_J; i++) {
-        pinMode(stepPin[i], OUTPUT);
-        pinMode(dirPin[i], OUTPUT);
-        digitalWrite(stepPin[i], LOW);
-        digitalWrite(dirPin[i], LOW);
+    // Initializes pins for all joints
+    for (int j = 0; j < n_J; j++) {
+        pinMode(stepPin[j], OUTPUT);
+        pinMode(dirPin[j], OUTPUT);
+        digitalWrite(stepPin[j], LOW);
+        digitalWrite(dirPin[j], LOW);
     }
 }
 
 void initParams() {
-    for (int i=0; i<n_J; i++) {
-        encMult[i] = (float)(CPR[i] * gearRatio[i]) / 360.0f;
-        stepDeg[i] = (float)(SPR * gearRatio[i]) / 360.0f;
-
-        stepCount[i] = 0;
-        jointDeg[i] = 0.0f;
+    for (int j = 0; j < n_J; j++) {
+        encMult[j] = (float)(CPR[j] * gearRatio[j]) / 360.0f;
+        stepDeg[j] = (float)(SPR * gearRatio[j]) / 360.0f;
     }
 }
 
@@ -114,7 +110,7 @@ void updateEncoders() {
     if (now - lastUpdate >= 1000) {
         lastUpdate = now;
 
-        for (int j=0; j<n_J; j++) {
+        for (int j = 0; j < n_J; j++) {
             encRaw[j] = enc[j].read();
             encDeg[j] = (float)encRaw[j] / encMult[j];
         }
@@ -122,8 +118,7 @@ void updateEncoders() {
 }
 
 void moveJointsToDeg(const float targetDeg[n_J], float speed = 30.0f) {
-    if (!motorsEnabled) return;
-    if (estopActive())  return;
+    if (!motorsEnabled || eStopEnabled || freeMoveEnabled) return; // Aborts if motors are disabled, or eStop or FreeMove is enabled
 
     long remSteps[n_J];
     int direction[n_J];
@@ -143,7 +138,7 @@ void moveJointsToDeg(const float targetDeg[n_J], float speed = 30.0f) {
         // Bruk samme speed for alle ledd
         float jointSpeed = speed;
 
-        // Clamp position
+        // Clamp joint position
         if (deg > limPos[j]) deg = limPos[j];
         if (deg < limNeg[j]) deg = limNeg[j];
 
@@ -184,8 +179,14 @@ void moveJointsToDeg(const float targetDeg[n_J], float speed = 30.0f) {
     if (!hasActiveJoint) return;
 
     while (true) {
-        if (estopActive()) break;
+        handleEStop();
+        handleFreeMove();
 
+        // Aborts movement if eStop or freeMove is enabled
+        if (eStopEnabled || freeMoveEnabled) {
+            break;
+        }
+            
         unsigned long now = micros();
         bool moving = false;
 
@@ -214,33 +215,117 @@ void moveJointsToDeg(const float targetDeg[n_J], float speed = 30.0f) {
     }
 }
 
-void home(float speed = 30.0f) {
-    float targetDeg[n_J] = {0, 0, 0, 0, 0, 0};
+void setHome() {
+    if (eStopEnabled) return;
+    for (int j=0; j<n_J; j++) {
+        enc[j].write(0);
+        encRaw[j] = 0;
+        encDeg[j] = 0.0f;
+        stepCount[j] = 0;
+        jointDeg[j] = 0.0f;
+    }
+}
 
+void moveHome(float speed = 30.0f) {
+    float targetDeg[n_J] = {0, 0, 0, 0, 0, 0};
     moveJointsToDeg(targetDeg, speed);
+}
+
+void handleEStop() {
+    static bool lastRaw = HIGH;
+    static bool lastStable = HIGH;
+    static unsigned long lastDebounce = 0;
+    const unsigned long debounceDelay = 50; // ms
+
+    bool raw = digitalRead(eStopPin);
+    unsigned long now = millis();
+
+    if (raw != lastRaw) {
+        lastDebounce = now;
+        lastRaw = raw;
+    }
+
+    if ((now - lastDebounce) > debounceDelay) {
+        if (raw != lastStable) {
+            lastStable = raw;
+
+            if (raw == LOW) {
+                eStopEnabled = true;
+                enableMotors(false);
+                Serial.println("ESTOP ENABLED");
+            }
+        }     
+    }
+}
+
+void handleFreeMove() {
+    static bool lastRaw = HIGH;
+    static bool lastStable = HIGH;
+    static unsigned long lastDebounce = 0;
+    const unsigned long debounceDelay = 50; // ms    
+
+    bool raw = digitalRead(freeMovePin);
+    unsigned long now = millis();
+
+    if (raw != lastRaw) {
+        lastDebounce = now;
+        lastRaw = raw;
+    }
+
+    if ((now - lastDebounce) > debounceDelay) {
+        if (raw != lastStable) {
+            lastStable = raw;
+
+            if (raw == LOW) {
+                freeMoveEnabled = !freeMoveEnabled;
+                enableMotors(!freeMoveEnabled);
+                Serial.println(freeMoveEnabled ? "FREEMOVE ON" : "FREEMOVE OFF");
+            }
+        }
+    }
+}
+
+void handleHome() { 
+    static bool lastVal = HIGH;
+    static unsigned long lastTime = 0;
+    const unsigned long debounceDelay = 50; // ms
+
+    bool raw = digitalRead(homePin);
+    unsigned long now = millis();
+
+    if(now - lastTime > debounceDelay) {
+        if(raw == LOW && lastVal == HIGH) {
+            if (!eStopEnabled && !freeMoveEnabled) {
+                moveHome((float)robot_speed);
+            }
+        }
+        lastVal = raw;
+        lastTime = now;
+    }
 }
 
 void setup() {
     Serial.begin(115200);
     initPins();
     initParams();
-    home();
+    setHome();
     enableMotors(true);
-
-    
 }
 
 void loop() {
     updateEncoders();
+    handleEStop();
+    handleFreeMove();
+    handleHome();
+
+    if (eStopEnabled) return;
 
     if (Serial.available() > 0) {
         handleSerialInput();
         moveJointsToDeg(Jlist, (float)robot_speed);
-
         Serial.println("[" + String(Jlist[0]) + " " + String(Jlist[1]) + " " + String(Jlist[2]) + " " + String(Jlist[3]) + " " + String(Jlist[4]) + " " + String(Jlist[5]) + "]");
         update_encoder_valus();
-
         Serial.println("end");
-  }
+    }
 
 }
