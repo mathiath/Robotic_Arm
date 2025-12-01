@@ -22,11 +22,11 @@ The file `serial.ino` is automatically detected and compiled by Arduino.
 
 To ensure correct homing and encoder alignment:
 
-- Place the robot in the upright zero position (all joints at 0°).
-- Insert zeroing pins.
-- Power the motor drivers.
-- Connect USB to the Teensy, and wait for it to initialize and calibrate.
-- Remove the pins before any movement is executed.
+1. Place the robot in the upright zero position (all joints at 0°)
+2. Insert zeroing pins
+3. Power the motor drivers
+4. Connect USB to the Teensy, and wait for it to initialize and calibrate
+5. Remove the pins before any movement is executed
 
 ### 2. Home Button
 
@@ -52,18 +52,23 @@ The controller accepts the following commands:
 
 ## Emergency Stop (E-STOP)
 
-- Pressing the E-STOP button immediately disables the motors. The arm may fall freely depending on load and position.
+- Pressing the E-STOP button immediately disables all motors. 
+- The arm may fall freely depending on payload and joint position.
 
-### Resetting E-STOP
+The E-STOP is a latching, dual-circuit safety stop:
+- One circuit physically cuts the stepper driver ENABLE lines.
+- The other provides a firmware-level stop for redundancy, and allows for future digital feedback to RoboDK.
 
-E-STOP requires a full power cycle and re-homing of the system.
+The arm will not be operational until the E-STOP is manually unlatched and the system has been power-cycled and re-homed.
 
-- Unplug the power to the arm and the USB.
-- Place the robot in the upright zero position (all joints at 0°).
-- Insert zeroing pins.
-- Power the motor drivers.
-- Connect USB to the Teensy, and wait for it to initialize and calibrate.
-- Remove the pins before any movement is executed.
+### Reset Procedure
+1. Unplug the power to the arm and disconnect the USB cable
+2. Unlatch the E-STOP button
+3. Place the robot in the upright zero position
+4. Insert zeroing pins
+5. Reconnect motor power
+6. Reconnect USB to the Teensy and wait for it to initialize and calibrate
+7. Remove the pins before any movement is executed
 
 ---
 
@@ -78,5 +83,5 @@ Both files are compiled automatically by the Arduino IDE.
 
 ## Notes
 
-- Current setup uses a single shared speed value for all joints due to the RoboDK - Python interface.
+- Current setup uses a single shared speed value for all joints, due to the RoboDK - Python interface.
 - Acceleration smoothing is not implemented in this version.
