@@ -26,14 +26,14 @@ const int encAPin[n_J] = {14, 16, 18, 20, 22, 24};
 const int encBPin[n_J] = {15, 17, 19, 21, 23, 25};
 
 const int enPin      = 12;
-const int eStopPin   = 26;
-const int freeMovePin= 27;
-const int homePin    = 28;
+const int eStopPin   = 26; // latching button
+const int freeMovePin= 27; // momentary button, yellow
+const int homePin    = 28; // momentary button, green
 
 // motor + encoder + driver specs
 const int SPR = 1600; // motor steps per rev
 const int CPR[n_J]       = {4000, 4000, 4000, 1200, 1200, 4000}; // encoder counts per rev
-const int gearRatio[n_J] = {10,   50,   20,   20,   40,   20};   // gearbox ratio
+const int gearRatio[n_J] = {71,   50,   20,   20,   40,   20};   // gearbox ratio
 
 const int invDir[n_J] = {0, 0, 0, 0, 0, 0}; // invert direction for motors
 
