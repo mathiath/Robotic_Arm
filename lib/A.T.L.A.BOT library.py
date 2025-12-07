@@ -8,6 +8,7 @@ import sys
 from time import sleep
 import serial
 from robodk.robolink import Robolink, ITEM_TYPE_ROBOT
+from robodk import transl
 from serial.serialutil import SerialException
 
 class RobotSerial:
@@ -17,7 +18,7 @@ class RobotSerial:
         - Windows: 'COM5' or equivalent
         - Linux: '/dev/ttyACM0' or equivalent
         - Mac-OS: '/dev/tty.usbmodemXXXX' or equivalent"""
-    def __init__(self, port, tcp_speed=30, baudrate=115200, read_delay=0.1, write_delay=0.1):
+    def __init__(self, port, tcp_length=(0,0,0), robot_speed=30, baudrate=115200, read_delay=0.1, write_delay=0.1):
         try: # trying to connect to the robot with Serial
             self.ser = serial.Serial(port, baudrate)
         except SerialException:
@@ -27,10 +28,11 @@ class RobotSerial:
         self.robot = self.RDK.Item('', ITEM_TYPE_ROBOT)
         sleep(read_delay)  #Waiting for serial to initialize
         self.write_delay = write_delay
-        self.tcp_speed = tcp_speed
+        self.tcp_length = tcp_length
+        self.robot_speed = robot_speed
         sleep(1.5) #Satrtup delay
         self.homing_robot() #getting positions of all joints
-        self.robot_speed_control(tcp_speed)
+        self.robot_speed_control(robot_speed)
         print("")
 
     def home(self):
@@ -67,9 +69,9 @@ class RobotSerial:
     def joint_values_for_target(self, target):
         """Retrieves all the angles of all the joints of the target and stores them in a list"""
         if str(target).startswith("RoboDK"): #checks if target is an direct object of robodk
-            outer_list = self.robot.SolveIK(target.Pose())
+            outer_list = self.robot.SolveIK(target.Pose() * transl(self.tcp_length[0],self.tcp_length[1],self.tcp_length[2]))
         elif str(target).startswith("Pose"): #checks if target is a Pose objekt
-            outer_list = self.robot.SolveIK(target)
+            outer_list = self.robot.SolveIK(target * transl(self.tcp_length[0],self.tcp_length[1],self.tcp_length[2]))
         else:
             outer_list = target
 
@@ -100,7 +102,7 @@ class RobotSerial:
             self.robot.setSpeed(30)
             self.send_signal(30, "L")
             self.read_signal()
-            self.tcp_speed = 30
+            self.robot_speed = 30
         else:
             self.robot.setSpeed(speed)
             self.send_signal(speed, "L")
