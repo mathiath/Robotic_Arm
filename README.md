@@ -7,10 +7,11 @@ This code runs on a Teensy 4.1 and communicates with RoboDK through a Python bri
 ---
 
 ## Installing the Firmware
-
-1. Open `main.ino` in the Arduino IDE.
-2. Select **Teensy 4.1** under Tools - Board.
-3. Upload.
+1. Install Arduino IDE.
+2. Use the following instructions to add the Teensy 4.1 board to Arduino IDE: https://www.pjrc.com/teensy/td_download.html
+3. Open `main.ino` in the Arduino IDE.
+4. Select **Teensy 4.1** under Tools - Board.
+5. Upload.
 
 The file `serial.ino` is automatically detected and compiled by Arduino.
 
