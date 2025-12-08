@@ -180,7 +180,7 @@ void moveJointsToDeg(const float targetDeg[n_J], float speed = 30.0f) {
         float stepsPerSec = jointSpeed * stepDeg[j];
         if (stepsPerSec < 1.0f) stepsPerSec = 1.0f;
 
-        stepIntervalUs[j] = (unsigned long)(1000000.0f / stepsPerSec);
+        stepIntervalUs[j] = (unsigned long)(1000000.0f / (2 * stepsPerSec));
         lastStepUs[j] = nowUs;
 
         stepLevel[j] = LOW;
