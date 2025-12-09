@@ -28,7 +28,7 @@ class RobotSerial:
         self.robot = self.RDK.Item('', ITEM_TYPE_ROBOT)
         sleep(read_delay)  #Waiting for serial to initialize
         self.write_delay = write_delay
-        self.tcp_length = tcp_length
+        self.tcp_length = tcp_length #UR gripper = (0,20,-130) | custom TCP = (0,0,125)
         self.robot_speed = robot_speed
         sleep(1.5) #Satrtup delay
         self.homing_robot() #getting positions of all joints
