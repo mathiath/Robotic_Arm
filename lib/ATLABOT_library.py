@@ -16,21 +16,20 @@ class RobotSerial:
      Objects of this class tries to connect to the port when
      created, the prot is different based on the operating system:
         - Windows: 'COM5' or equivalent"""
-    def __init__(self, port, gripper_length=(0,0,0), robot_speed=10, baudrate=115200, read_delay=0.1, write_delay=0.1):
+    def __init__(self, serial_port, gripper_length_xyz=(0,0,0), robot_speed_percent=50):
         try: # trying to connect to the robot with Serial
-            self.__ser = serial.Serial(port, baudrate)
+            self.__ser = serial.Serial(serial_port, 115200)
         except SerialException:
             print("The robot is not connected")
             sys.exit(0)
+        sleep(0.1)  #Waiting for serial to initialize
         self.__RDK = Robolink()
         self.__robot = self.__RDK.Item('ATLABOT', ITEM_TYPE_ROBOT)
-        sleep(read_delay)  #Waiting for serial to initialize
-        self.__write_delay = write_delay
-        self.__gripper_length = gripper_length #UR gripper = (0,20,-130) | custom TCP = (0,0,-55)
-        self.__robot_speed = robot_speed
+        self.__gripper_length = gripper_length_xyz #UR gripper = (0,20,-130) | custom TCP = (0,0,-55)
+        self.__robot_speed_percent = robot_speed_percent
         sleep(1.5) #Satrtup delay
         self.__homing_robot() #getting positions of all joints
-        self.__robot_speed_control(self.__robot_speed)
+        self.__robot_speed_control(self.__robot_speed_percent)
         print("")
 
     def home(self):
@@ -96,7 +95,7 @@ class RobotSerial:
     def __robot_speed_control(self, speed):
         """Setts a speed for all jonits, the speed has to be between 1 and 90"""
         under_speed_limit = 1
-        upper_speed_limit = 31
+        upper_speed_limit = 101
         if speed <= under_speed_limit or speed >= upper_speed_limit:
             print(f"The robot Speed must be between {under_speed_limit} and {upper_speed_limit - 1}")
             sys.exit(0)
@@ -129,7 +128,7 @@ class RobotSerial:
                         text_list.append(float(i))
                     print(f"Encoder values from robot: {text_list}")
                     self.__correcting_robodk(text_list)
-                elif read_serial.startswith("Emergency"):
+                elif read_serial.startswith("ESTOP"):
                     print("------------------------")
                     print("Robot is in emergency stop!")
                     print("------------------------")
@@ -152,4 +151,4 @@ class RobotSerial:
             info = 'G' + str(info) + '\n'
 
         self.__ser.write(info.encode('utf-8'))
-        sleep(self.__write_delay)
+        sleep(0.1) #Serial writing delay
