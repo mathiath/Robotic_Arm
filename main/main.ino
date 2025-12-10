@@ -16,7 +16,7 @@ const int n_J = 6; // Number of joints
 
 // external variables from RoboDK interface
 extern float Jlist[6];
-extern int robot_speed; // deg/s
+extern int robot_speed; // % of joint max deg/s
 
 // pins
 const int stepPin[n_J] = {0, 2, 4, 6, 8, 10};
@@ -33,7 +33,7 @@ const int homePin    = 28; // momentary button, green
 // motor + encoder + driver specs
 const int SPR = 1600; // motor steps per rev
 const int CPR[n_J]       = {4000, 4000, 4000, 1200, 1200, 4000}; // encoder counts per rev
-const int gearRatio[n_J] = {71,   50,   20,   20,   40,   20};   // gearbox ratio
+const float gearRatio[n_J] = {71,   50,   20,   20,   33.333,   20};   // gearbox ratio
 
 const int invDir[n_J] = {0, 0, 0, 0, 0, 0}; // invert direction for motors
 
@@ -48,21 +48,25 @@ Encoder enc[n_J] = {
 };
 
 // Joint limits (deg)
-float limPos[n_J] = {180.0f,  90.0f,  90.0f, 180.0f,  90.0f,  90.0f};
-float limNeg[n_J] = {-180.0f, -90.0f, -90.0f, -180.0f, -90.0f, -90.0f};
+float limPos[n_J] = {180.0f,  90.0f,  135.0f, 360.0f,  90.0f,  360.0f};
+float limNeg[n_J] = {-180.0f, -90.0f, -135.0f, -360.0f, -90.0f, -360.0f};
 
-// Maximum velocity per joint (deg/s)
-const float maxSpeed[n_J] = {180.0f, 90.0f, 180.0f, 270.0f, 180.0f, 270.0f};
+// Maximum velocity per joint (deg/s at 100% speed)
+const float maxSpeed[n_J] = {30.0f, 20.0f, 30.0f, 40.0f, 30.0f, 180.0f};
+
+const float accelK = 0.2f; // Acceleration duration (% of movement)
+const float accelMinSpeed = 0.2f; // Percentage of speed at the acceleration's slowest point.
 
 // internal vars
 float encMult[n_J];  // encoder counts per degree (includes gearbox)
 float stepDeg[n_J];  // motor steps per degree (includes gearbox)
-
 long  encRaw[n_J];   // raw encoder counts
 float encDeg[n_J];   // encoder deg position
 
 long  stepCount[n_J]; // accumulated step count
 float jointDeg[n_J];  // current joint angle (deg) from step count
+long totalSteps[n_J]; // total steps for current move (for accel/decel)
+long stepsDone[n_J];  // steps already taken in current move
 
 // function state flags
 bool motorsEnabled   = false;
@@ -130,7 +134,7 @@ void updateEncoders() {
 }
 
 // main joint motion function
-void moveJointsToDeg(const float targetDeg[n_J], float speed = 30.0f) {
+void moveJointsToDeg(const float targetDeg[n_J], float speed = 25.0f) {
     // abort if unsafe
     if (!motorsEnabled || eStopEnabled || freeMoveEnabled) return;
 
@@ -147,19 +151,25 @@ void moveJointsToDeg(const float targetDeg[n_J], float speed = 30.0f) {
     for (int j = 0; j < n_J; j++) {
 
         float deg = targetDeg[j];
-        float jointSpeed = speed; // single speed shared for all joints
 
         // limit angle to joint range
         if (deg > limPos[j]) deg = limPos[j];
         if (deg < limNeg[j]) deg = limNeg[j];
 
-        // clamp requested speed
-        if (jointSpeed > maxSpeed[j]) jointSpeed = maxSpeed[j];
-        if (jointSpeed < 0.0f)        jointSpeed = 0.0f;
+        // global speed = prosent (0–100) av maxSpeed for hvert ledd
+        float speedK = speed;
+        if (speedK < 0.0f)  speedK = 0.0f;
+        if (speedK > 100.0f) speedK = 100.0f;
+
+        float jointSpeed = maxSpeed[j] * (speedK / 100.0f);
+        // sikkerhet: ikke negativ
+        if (jointSpeed < 0.0f) jointSpeed = 0.0f;
 
         // calculate step difference
         long delta = degToSteps(j, deg) - stepCount[j];
         remSteps[j] = labs(delta);
+        totalSteps[j] = remSteps[j];
+        stepsDone[j] = 0;
 
         // skip if no motion needed
         if (remSteps[j] == 0 || jointSpeed == 0.0f) {
@@ -194,37 +204,67 @@ void moveJointsToDeg(const float targetDeg[n_J], float speed = 30.0f) {
         handleEStop();
         handleFreeMove();
 
-        // stop immediately if unsafe
+        // Immediately stop motion if unsafe condition is active
         if (eStopEnabled || freeMoveEnabled) break;
             
         unsigned long now = micros();
         bool moving = false;
 
-        // update all joints
         for (int j = 0; j < n_J; j++) {
+            // Skip joints that are finished or inactive
             if (remSteps[j] == 0 || stepIntervalUs[j] == 0) continue;
 
-            if (now - lastStepUs[j] >= stepIntervalUs[j]) {
-                lastStepUs[j] += stepIntervalUs[j];
+            // Base step interval (cruise)
+            unsigned long intervalUs = stepIntervalUs[j];
 
-                // toggle step pin
+            // Simple accel/decel profile based on progress (0..1)
+            if (totalSteps[j] > 0) {
+                float pos   = (float)stepsDone[j] / (float)totalSteps[j]; // 0..1
+                float scale = 1.0f;
+
+                if (pos < accelK) {
+                    // Acceleration phase (start)
+                    float t = pos / accelK; // 0 -> 1
+                    scale = accelMinSpeed + (1.0f - accelMinSpeed) * t;
+                } else if (pos > 1.0f - accelK) {
+                    // Deceleration phase (end)
+                    float t = (1.0f - pos) / accelK; // 0 -> 1 towards the end
+                    scale = accelMinSpeed + (1.0f - accelMinSpeed) * t;
+                } else {
+                    // Cruise phase
+                    scale = 1.0f;
+                }
+
+                // Higher scale = higher speed = shorter interval
+                intervalUs = (unsigned long)((float)stepIntervalUs[j] / scale);
+            }
+
+            // Time to toggle step pin?
+            if (now - lastStepUs[j] >= intervalUs) {
+                lastStepUs[j] += intervalUs;
+
+                // Toggle step signal
                 stepLevel[j] = !stepLevel[j];
                 digitalWrite(stepPin[j], stepLevel[j]);
 
-                // count step only on falling edge
+                // Count steps only on falling edge
                 if (stepLevel[j] == LOW) {
                     remSteps[j]--;
+                    stepsDone[j]++;               // track progress for accel/decel
                     stepCount[j] += direction[j];
                     jointDeg[j]  = stepsToDeg(j, stepCount[j]);
                 }
             }
-            if (remSteps[j] > 0) {
-                moving = true;
-            }
+
+            // If any joint still has remaining steps, keep loop running
+            if (remSteps[j] > 0) moving = true;
         }
 
+        // Exit loop when all joints are finished
         if (!moving) break;
     }
+
+
 }
 
 // reset all positions to zero
@@ -253,6 +293,9 @@ void handleEStop() {
     static unsigned long lastDebounce = 0;
     const unsigned long debounceDelay = 50; // ms
 
+    static unsigned long lastPrint = 0;
+    const unsigned long printDelay = 200;
+
     bool raw = digitalRead(eStopPin);
     unsigned long now = millis();
 
@@ -271,6 +314,13 @@ void handleEStop() {
                 Serial.println("ESTOP ENABLED");
             }
         }     
+    }
+
+    if (eStopEnabled) {
+        if (now - lastPrint >= printDelay) {
+            lastPrint = now;
+            Serial.println("ESTOP ENABLED");
+        }
     }
 }
 
@@ -294,6 +344,11 @@ void handleFreeMove() {
             lastStable = raw;
 
             if (raw == LOW) {
+                if (eStopEnabled) {
+                    Serial.println("FREEMOVE BLOCKED - ESTOP ACTIVE");
+                    return;
+                }
+
                 freeMoveEnabled = !freeMoveEnabled;
                 enableMotors(!freeMoveEnabled);
                 Serial.println(freeMoveEnabled ? "FREEMOVE ON" : "FREEMOVE OFF");
