@@ -281,7 +281,7 @@ void setHome() {
 }
 
 // move robot to home position (0 deg all joints, straight up)
-void moveHome(float speed = 30.0f) {
+void moveHome(float speed = 50.0f) {
     float targetDeg[n_J] = {0, 0, 0, 0, 0, 0};
     moveJointsToDeg(targetDeg, speed);
 }
@@ -369,7 +369,7 @@ void handleHome() {
     if (now - lastTime > debounceDelay) {
         if (raw == LOW && lastVal == HIGH) {
             if (!eStopEnabled && !freeMoveEnabled) {
-                moveHome((float)robot_speed);
+                moveHome();
             }
         }
         lastVal = raw;
